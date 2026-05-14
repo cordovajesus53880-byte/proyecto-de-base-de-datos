@@ -1,0 +1,11 @@
+// inicializa la conexión a firebase para poder usar la base de datos en el proyecto
+const admin = require('firebase-admin');
+//carga la clave de firebase para conectarse a la base de datos del archivo key
+const serviceAccount = require('./key.json');
+//inicializa la conexión a firebase con la clave cargada
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+//exporta la base de datos para poder usarla en el proyecto con el nombre db
+const db = admin.firestore();
+module.exports = db;

@@ -1,0 +1,107 @@
+const express = require('express');
+const app = express();
+const port = 3000;
+const db = require('./firebase'); 
+
+app.use(express.json()); 
+
+const collection = db.collection('productos'); 
+
+// 1. OBTENER TODOS LOS PRODUCTOS
+app.get('/productos', async (req, res) => {
+  try {
+    const snapshot = await collection.get();
+    const productos = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    res.json(productos);
+  } catch (error) {
+    res.status(500).json({ message: 'Error al obtener productos' });
+  }
+});
+
+// 2. BUSCAR POR CATEGORÍA
+app.get('/productos/categoria/:categoria', async (req, res) => {
+  try {
+    const categoria = req.params.categoria;
+    const snapshot = await collection.where('categoria', '==', categoria).get();
+    
+    if (snapshot.empty) {
+      return res.status(404).json({ message: `No hay productos en la categoría: ${categoria}` });
+    }
+
+    const productos = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    res.json(productos);
+  } catch (error) {
+    res.status(500).json({ message: 'Error al filtrar inventario' });
+  }
+});
+
+// 3. AGREGAR PRODUCTO (CREATE)
+app.post('/productos', async (req, res) => {
+  try {
+    const { nombre, precio, categoria, stock } = req.body;
+    const docRef = await collection.add({
+      nombre,
+      precio: Number(precio),
+      categoria,
+      stock: Number(stock),
+      fecha: new Date()
+    });
+    res.json({ message: 'Producto agregado exitosamente', id: docRef.id });
+  } catch (error) {
+    res.status(500).json({ message: 'Error al agregar producto' });
+  }
+});
+
+// 4. ACTUALIZAR PRODUCTO (UPDATE)
+// Esta ruta actualiza nombre, precio o stock según lo que envíes en el body
+app.put('/productos/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const datosActualizados = req.body;
+    
+    // Convertimos a número si vienen esos campos
+    if(datosActualizados.precio) datosActualizados.precio = Number(datosActualizados.precio);
+    if(datosActualizados.stock) datosActualizados.stock = Number(datosActualizados.stock);
+
+    await collection.doc(id).update(datosActualizados);
+    res.json({ message: 'Producto actualizado correctamente' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error al actualizar el producto' });
+  }
+});
+
+// 5. ELIMINAR PRODUCTO (DELETE)
+app.delete('/productos/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    await collection.doc(id).delete();
+    res.json({ message: `Producto con ID ${id} eliminado correctamente` });
+  } catch (error) {
+    res.status(500).json({ message: 'No se pudo eliminar el producto' });
+  }
+});
+
+// --- Extras ---
+
+app.post('/ventas', async (req, res) => {
+  try { 
+    const docRef = await db.collection('ventas').add({ fecha: new Date() });
+    res.json({ message: 'Ticket abierto exitosamente', id: docRef.id });
+  } catch (error) {
+    res.status(500).json({ message: 'Error al crear venta' });
+  }
+});
+
+app.get('/', (req, res) => {
+  res.send('¡Servidor Node.js con Firebase funcionando!');
+});
+
+app.listen(port, () => {
+  console.log(`Servidor escuchando en http://localhost:${port}`);
+});
