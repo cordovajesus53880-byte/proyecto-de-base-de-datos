@@ -3,105 +3,214 @@ const app = express();
 const port = 3000;
 const db = require('./firebase'); 
 
+// Middleware para procesar JSON
 app.use(express.json()); 
 
-const collection = db.collection('productos'); 
+// Referencias a las Colecciones de Firebase (Tablas)
+const productosCol = db.collection('productos');
+const ventasCol = db.collection('ventas');
+const ventasProductosCol = db.collection('ventas_productos');
 
-// 1. OBTENER TODOS LOS PRODUCTOS
+/**
+ * ============================================================
+ * 1. CRUD DE PRODUCTOS (Tabla: Producto)
+ * ============================================================
+ */
+
+// [LEER] - Obtener todos los productos del inventario
 app.get('/productos', async (req, res) => {
-  try {
-    const snapshot = await collection.get();
-    const productos = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-    res.json(productos);
-  } catch (error) {
-    res.status(500).json({ message: 'Error al obtener productos' });
-  }
-});
-
-// 2. BUSCAR POR CATEGORÍA
-app.get('/productos/categoria/:categoria', async (req, res) => {
-  try {
-    const categoria = req.params.categoria;
-    const snapshot = await collection.where('categoria', '==', categoria).get();
-    
-    if (snapshot.empty) {
-      return res.status(404).json({ message: `No hay productos en la categoría: ${categoria}` });
+    try {
+        console.log('Consultando inventario completo...');
+        const snapshot = await productosCol.get();
+        const productos = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        res.status(200).json(productos);
+    } catch (error) {
+        console.error('Error en GET /productos:', error);
+        res.status(500).json({ error: 'No se pudieron recuperar los productos' });
     }
-
-    const productos = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-    res.json(productos);
-  } catch (error) {
-    res.status(500).json({ message: 'Error al filtrar inventario' });
-  }
 });
 
-// 3. AGREGAR PRODUCTO (CREATE)
+// [LEER] - Buscar producto por ID específico
+app.get('/productos/:id', async (req, res) => {
+    try {
+        const doc = await productosCol.doc(req.params.id).get();
+        if (!doc.exists) {
+            return res.status(404).json({ message: 'Producto no encontrado' });
+        }
+        res.json({ id: doc.id, ...doc.data() });
+    } catch (error) {
+        res.status(500).json({ error: 'Error al buscar el producto' });
+    }
+});
+
+// [BUSCAR] - Filtrar por categoría
+app.get('/productos/categoria/:categoria', async (req, res) => {
+    try {
+        const categoria = req.params.categoria;
+        const snapshot = await productosCol.where('categoria', '==', categoria).get();
+        
+        if (snapshot.empty) {
+            return res.status(404).json({ message: `No hay productos en: ${categoria}` });
+        }
+
+        const productos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        res.json(productos);
+    } catch (error) {
+        res.status(500).json({ message: 'Error al filtrar inventario' });
+    }
+});
+
+// [CREAR] - Agregar nuevo producto al sistema
 app.post('/productos', async (req, res) => {
-  try {
-    const { nombre, precio, categoria, stock } = req.body;
-    const docRef = await collection.add({
-      nombre,
-      precio: Number(precio),
-      categoria,
-      stock: Number(stock),
-      fecha: new Date()
-    });
-    res.json({ message: 'Producto agregado exitosamente', id: docRef.id });
-  } catch (error) {
-    res.status(500).json({ message: 'Error al agregar producto' });
-  }
+    try {
+        const { nombre, precio, categoria, stock } = req.body;
+
+        // Validación de campos obligatorios
+        if (!nombre || !precio) {
+            return res.status(400).json({ message: 'Nombre y precio son obligatorios' });
+        }
+
+        const nuevoProducto = {
+            nombre,
+            precio: Number(precio),
+            categoria: categoria || 'General',
+            stock: Number(stock) || 0,
+            fechaCreacion: new Date()
+        };
+
+        const docRef = await productosCol.add(nuevoProducto);
+        res.status(201).json({ 
+            message: 'Producto registrado con éxito', 
+            id: docRef.id 
+        });
+    } catch (error) {
+        res.status(500).json({ message: 'Error al registrar producto' });
+    }
 });
 
-// 4. ACTUALIZAR PRODUCTO (UPDATE)
-// Esta ruta actualiza nombre, precio o stock según lo que envíes en el body
+// [ACTUALIZAR] - Modificar datos de un producto existente
 app.put('/productos/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const datosActualizados = req.body;
-    
-    // Convertimos a número si vienen esos campos
-    if(datosActualizados.precio) datosActualizados.precio = Number(datosActualizados.precio);
-    if(datosActualizados.stock) datosActualizados.stock = Number(datosActualizados.stock);
+    try {
+        const id = req.params.id;
+        const datos = req.body;
+        
+        const doc = await productosCol.doc(id).get();
+        if (!doc.exists) {
+            return res.status(404).json({ message: 'El producto a actualizar no existe' });
+        }
 
-    await collection.doc(id).update(datosActualizados);
-    res.json({ message: 'Producto actualizado correctamente' });
-  } catch (error) {
-    res.status(500).json({ message: 'Error al actualizar el producto' });
-  }
+        // Asegurar que los valores numéricos se guarden correctamente
+        if (datos.precio) datos.precio = Number(datos.precio);
+        if (datos.stock) datos.stock = Number(datos.stock);
+
+        await productosCol.doc(id).update({
+            ...datos,
+            ultimaActualizacion: new Date()
+        });
+
+        res.json({ message: 'Información actualizada correctamente' });
+    } catch (error) {
+        res.status(500).json({ message: 'Error en la actualización' });
+    }
 });
 
-// 5. ELIMINAR PRODUCTO (DELETE)
+// [ELIMINAR] - Borrar producto del sistema
 app.delete('/productos/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    await collection.doc(id).delete();
-    res.json({ message: `Producto con ID ${id} eliminado correctamente` });
-  } catch (error) {
-    res.status(500).json({ message: 'No se pudo eliminar el producto' });
-  }
+    try {
+        const id = req.params.id;
+        const doc = await productosCol.doc(id).get();
+        
+        if (!doc.exists) {
+            return res.status(404).json({ message: 'ID no encontrado' });
+        }
+
+        await productosCol.doc(id).delete();
+        res.json({ message: `Producto ${id} eliminado satisfactoriamente` });
+    } catch (error) {
+        res.status(500).json({ message: 'No se pudo completar la eliminación' });
+    }
 });
 
-// --- Extras ---
+/**
+ * ============================================================
+ * 2. SISTEMA DE VENTAS (Relación: Ventas -> Ventas_Productos)
+ * ============================================================
+ */
 
+// [CREAR VENTA] - Genera un ticket y registra los productos vendidos
 app.post('/ventas', async (req, res) => {
-  try { 
-    const docRef = await db.collection('ventas').add({ fecha: new Date() });
-    res.json({ message: 'Ticket abierto exitosamente', id: docRef.id });
-  } catch (error) {
-    res.status(500).json({ message: 'Error al crear venta' });
-  }
+    try {
+        const { cliente, productosVendidos } = req.body; 
+        // productosVendidos debe ser un array de: { idProducto, cantidad, precio Unitario }
+
+        if (!productosVendidos || productosVendidos.length === 0) {
+            return res.status(400).json({ message: 'La venta debe incluir al menos un producto' });
+        }
+
+        // A. Crear el documento principal de la Venta (Cabecera)
+        const totalVenta = productosVendidos.reduce((acc, item) => acc + (item.precioUnitario * item.cantidad), 0);
+        
+        const ventaCabecera = await ventasCol.add({
+            cliente: cliente || 'Publico General',
+            fecha: new Date(),
+            total: totalVenta
+        });
+
+        // B. Registrar cada producto en la tabla intermedia (Ventas_Productos)
+        const promesasDetalles = productosVendidos.map(item => {
+            return ventasProductosCol.add({
+                idVenta: ventaCabecera.id,        // FK a Ventas
+                idProducto: item.idProducto,      // FK a Productos
+                cantidad: Number(item.cantidad),
+                subtotal: Number(item.precioUnitario) * Number(item.cantidad)
+            });
+        });
+
+        await Promise.all(promesasDetalles);
+
+        res.status(201).json({ 
+            message: 'Venta procesada y ticket generado', 
+            folioVenta: ventaCabecera.id 
+        });
+
+    } catch (error) {
+        console.error('Error al procesar venta:', error);
+        res.status(500).json({ message: 'Fallo al generar el ticket de venta' });
+    }
 });
+
+// [LEER VENTAS] - Ver historial de tickets
+app.get('/ventas', async (req, res) => {
+    try {
+        const snapshot = await ventasCol.get();
+        const ventas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        res.json(ventas);
+    } catch (error) {
+        res.status(500).json({ message: 'Error al recuperar historial' });
+    }
+});
+
+/**
+ * ============================================================
+ * 3. CONFIGURACIÓN DE INICIO Y RUTAS BASE
+ * ============================================================
+ */
 
 app.get('/', (req, res) => {
-  res.send('¡Servidor Node.js con Firebase funcionando!');
+    res.send('<h1>Servidor de Punto de Venta Activo</h1><p>Relaciones: Ventas -> Ventas_Productos -> Producto</p>');
+});
+
+// Manejo de rutas no encontradas (404)
+app.use((req, res) => {
+    res.status(404).send('La ruta especificada no existe en el servidor.');
 });
 
 app.listen(port, () => {
-  console.log(`Servidor escuchando en http://localhost:${port}`);
+    console.log('--------------------------------------------------');
+    console.log(`Servidor escuchando en: http://localhost:${port}`);
+    console.log('Proyecto: Portafolio 3 - Sistema CRUD con Firebase');
+    console.log('--------------------------------------------------');
 });
